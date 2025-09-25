@@ -57,7 +57,8 @@ func deletePodsOnNode(client *kubernetes.Clientset, namespace string, nodename s
 
 	pods, _ := client.CoreV1().Pods(namespace).List(
 		context.TODO(), v1.ListOptions{
-			FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodename), // Filter based on nodename earlier.
+			// Filter based on node-name earlier.
+			FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodename),
 		},
 	)
 
@@ -83,13 +84,8 @@ func deletePodsOnNode(client *kubernetes.Clientset, namespace string, nodename s
 
 		fmt.Println("Deleted Dry-run")
 		client.CoreV1().Pods(namespace).Delete(
-			context.TODO(),
-			pod.Name,
-			v1.DeleteOptions{
-				DryRun: dryRun,
-			},
+			context.TODO(), pod.Name, v1.DeleteOptions{ DryRun: dryRun },
 		)
-
 	}
 }
 
@@ -113,6 +109,9 @@ func main() {
 
 	var verbose bool
 	pflag.BoolVarP(&verbose, "verbose", "v", false, "Being more informative")
+
+	var dryrun bool
+	pflag.BoolVarP(&dryrun, "dry-run", "", false, "Run in a dry-run manner")
 
 	var namespace string
 	pflag.StringVarP(&namespace, "namespace", "n", "default", "Namespace of the pod(s)")
@@ -143,6 +142,11 @@ func main() {
 	// ! Abort if provided node is control-plane.
 	if isNodeControlPlane(client, node) {
 		fmt.Fprintf(os.Stderr, "Can't perform this action on a control-plane node.\n")
+		return
+	}
+
+	if _, err = client.CoreV1().Namespaces().Get(context.TODO(),namespace,v1.GetOptions{}) ; err != nil {
+		fmt.Fprintf(os.Stderr, "Namespace %v does not exist.", namespace)
 		return
 	}
 
