@@ -14,6 +14,7 @@ import (
 
 const (
 	notGiven = "N/A"
+	controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 )
 
 // getClientset - loads kubeconfig and returns a Kubernetes clientset
@@ -41,47 +42,63 @@ Output:
 	CONTAINER: IMAGE
 
 Options:
-	-A, --all                List images of all pods in the namespace
 	-h, --help               Print plugin usage
-	-ns, --namespace string   Namespace of the pod(s) (default: "default")
-	-nd, --node string   	Node name on which pod(s) are scheduled. (Required)
+	-n, --namespace string   Namespace of the pod(s) (default: "default")
+	-w, --node string   	 Node name on which pod(s) are scheduled. (Required)
 	-v, --verbose            Show pod name in output
 
 Example:
-	$ kubectl dolphin -ns data -nd worker1
+	$ kubectl dolphin -n data -w worker1
 	`)
 }
 
 // Method to get pods of a given namespace deployed on a given node.
-func getPodsOfNamespaceOnNode(client *kubernetes.Clientset, namespace string, nodename string) {
+func deletePodsOnNode(client *kubernetes.Clientset, namespace string, nodename string) {
 
-	pods, _ := client.CoreV1().Pods(namespace).List(context.TODO(),v1.ListOptions{})
+	pods, _ := client.CoreV1().Pods(namespace).List(
+		context.TODO(), v1.ListOptions{
+			FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodename), // Filter based on nodename earlier.
+		},
+	)
 
-	for _, pod := range pods.Items {
-		if(pod.Spec.NodeName == nodename) {
-			fmt.Println(pod.Name)
-		}
-		// fmt.Println(pod.Spec.NodeName)
+	// Empty Pod list
+	if len(pods.Items) == 0 {
+		fmt.Fprintf(os.Stderr, "No pods found in namespace %v deployed on node %v.\n", namespace, nodename)
+		return
 	}
 
+	// Start deleting pod one by one.
+	for _, pod := range pods.Items {
+
+		// If -v/--verbose flag is provided...
+		if pflag.CommandLine.Changed("verbose") {
+			fmt.Println("Deleting pod: ", pod.Name)
+		}
+
+		dryRun := []string(nil)
+		// If -v/--verbose flag is provided...
+		if pflag.CommandLine.Changed("dry-run") {
+			dryRun = []string{"All"}
+		}
+
+		fmt.Println("Deleted Dry-run")
+		client.CoreV1().Pods(namespace).Delete(
+			context.TODO(),
+			pod.Name,
+			v1.DeleteOptions{
+				DryRun: dryRun,
+			},
+		)
+
+	}
 }
-
-// func printAllNodeName(client *kubernetes.Clientset) {
-// 	nodes, _ := client.CoreV1().Nodes().List(context.TODO(),v1.ListOptions{})
-
-// 	for _, node := range nodes.Items {
-// 		fmt.Println(node.Name)
-// 	}
-
-// }
 
 func isNodeControlPlane(client *kubernetes.Clientset, node string) bool {
 
-	// node, _ := client.CoreV1().Nodes().Get(context.TODO(), node, v1.GetOptions{})
-	_node, _ := client.CoreV1().Nodes().Get(context.TODO(),node,v1.GetOptions{})
+	_node, _ := client.CoreV1().Nodes().Get(context.TODO(), node, v1.GetOptions{})
 
 	for label := range _node.Labels {
-		if label == "node-role.kubernetes.io/control-plane" {
+		if label == controlPlaneLabel {
 			return true
 		}
 	}
@@ -94,6 +111,9 @@ func main() {
 	var help bool
 	pflag.BoolVarP(&help, "help", "h", false, "Print usage")
 
+	var verbose bool
+	pflag.BoolVarP(&verbose, "verbose", "v", false, "Being more informative")
+
 	var namespace string
 	pflag.StringVarP(&namespace, "namespace", "n", "default", "Namespace of the pod(s)")
 
@@ -102,28 +122,29 @@ func main() {
 
 	pflag.Parse()
 
+	// Print usage
 	if help {
 		printUsage()
 		return
 	}
 
-	fmt.Println(node)
-
+	// If nodename is not provided
 	if node == notGiven {
 		fmt.Fprintln(os.Stderr, "Error: --node NODE_NAME is required")
-		printUsage()
         os.Exit(1)
 	}
 
 	client, err := getClientset()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating Kubernetes client: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error connecting Kubernetes: %v\n", err)
 		os.Exit(1)
 	}
 
-	// args := pflag.Args()
+	// ! Abort if provided node is control-plane.
+	if isNodeControlPlane(client, node) {
+		fmt.Fprintf(os.Stderr, "Can't perform this action on a control-plane node.\n")
+		return
+	}
 
-	getPodsOfNamespaceOnNode(client, namespace, node)
-
-	fmt.Println(isNodeControlPlane(client, node))
+	deletePodsOnNode(client, namespace, node)
 }
