@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/pflag"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,6 +46,7 @@ Options:
 	-h, --help               Print plugin usage
 	-n, --namespace string   Namespace of the pod(s) (default: "default")
 	-w, --node string   	 Node name on which pod(s) are scheduled. (Required)
+	-b, --batch-size N   	 Delete in batch of N pod.
 	-v, --verbose            Show pod name in output
 
 Example:
@@ -53,7 +55,7 @@ Example:
 }
 
 // Method to get pods of a given namespace deployed on a given node.
-func deletePodsOnNode(client *kubernetes.Clientset, namespace string, nodename string) {
+func deletePodsOnNode(client *kubernetes.Clientset, namespace string, nodename string, batchSize int) {
 
 	pods, _ := client.CoreV1().Pods(namespace).List(
 		context.TODO(), v1.ListOptions{
@@ -68,24 +70,38 @@ func deletePodsOnNode(client *kubernetes.Clientset, namespace string, nodename s
 		return
 	}
 
-	// Start deleting pod one by one.
-	for _, pod := range pods.Items {
+	for i := 0; i < len(pods.Items); i += batchSize {
 
-		// If -v/--verbose flag is provided...
-		if pflag.CommandLine.Changed("verbose") {
-			fmt.Println("Deleting pod: ", pod.Name)
+		// Outbound of batch
+		end := i + batchSize
+		if end > len(pods.Items) {
+			end = len(pods.Items)
 		}
 
-		dryRun := []string(nil)
-		// If -v/--verbose flag is provided...
-		if pflag.CommandLine.Changed("dry-run") {
-			dryRun = []string{"All"}
+		// A slice from pod list
+		batchPods := pods.Items[i:end]
+
+		// Start deleting pod one by one.
+		for _, pod := range batchPods {
+
+			// If -v/--verbose flag is provided...
+			if pflag.CommandLine.Changed("verbose") {
+				fmt.Println("Deleting pod: ", pod.Name)
+			}
+
+			dryRun := []string(nil)
+			// If -v/--verbose flag is provided...
+			if pflag.CommandLine.Changed("dry-run") {
+				dryRun = []string{"All"}
+			}
+
+			client.CoreV1().Pods(namespace).Delete(
+				context.TODO(), pod.Name, v1.DeleteOptions{ DryRun: dryRun },
+			)
 		}
 
-		fmt.Println("Deleted Dry-run")
-		client.CoreV1().Pods(namespace).Delete(
-			context.TODO(), pod.Name, v1.DeleteOptions{ DryRun: dryRun },
-		)
+		// Add a delay between batches
+        time.Sleep(2 * time.Second)
 	}
 }
 
@@ -119,6 +135,9 @@ func main() {
 	var node string
 	pflag.StringVarP(&node, "node", "w", notGiven, "Name of the node on which pods are scheduled")
 
+	var batchSize int
+	pflag.IntVarP(&batchSize, "batch-size", "b", 5, "Number of pods to delete per batch")
+
 	pflag.Parse()
 
 	// Print usage
@@ -145,10 +164,11 @@ func main() {
 		return
 	}
 
+	// Namespace doesn't exist. Abort.
 	if _, err = client.CoreV1().Namespaces().Get(context.TODO(),namespace,v1.GetOptions{}) ; err != nil {
 		fmt.Fprintf(os.Stderr, "Namespace %v does not exist.", namespace)
 		return
 	}
 
-	deletePodsOnNode(client, namespace, node)
+	deletePodsOnNode(client, namespace, node, batchSize)
 }
