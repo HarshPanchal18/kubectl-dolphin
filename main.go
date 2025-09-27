@@ -56,6 +56,7 @@ Options:
 	-w, --node string   	 Node name on which pod(s) are scheduled (Required).
 	-b, --batch-size N   	 Delete in batch of N pod (default: 0).
 	-i, --interval N	 Wait for N seconds before deleting next batch (default & minimum: 0s). Works along with --batch-size.
+	--delete-daemons         Delete daemonset too.
 	--dry-run                Run in dry-run manner.
 	-v, --verbose            Show pod name in output.
 
@@ -156,6 +157,12 @@ func deletePods(pods []corev1.Pod, client *kubernetes.Clientset, namespace strin
 			fmt.Println(RED, err, RESET)
 			return
 		}
+
+		// Condition to check if a pod is owned by a daemonset.
+		// if pod.OwnerReferences[0].Kind == "DaemonSet" {
+		// 	fmt.Println("Daemonset", pod.Name)
+		// }
+
 	}
 }
 
